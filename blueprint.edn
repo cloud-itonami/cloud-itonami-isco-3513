@@ -1,0 +1,11 @@
+[{:itonami.blueprint/id "cloud-itonami-isco-3513"
+  :itonami.blueprint/name "Community Network Operations"
+  :itonami.blueprint/isco-08 "3513"
+  :itonami.blueprint/domain :ict/network-systems
+  :itonami.blueprint/license "AGPL-3.0-or-later"
+  :itonami.blueprint/social-impact [:service-reliability :digital-inclusion :local-jobs]
+  :itonami.blueprint/governor :network-systems-governor
+  :itonami.blueprint/robotics true
+  :itonami.blueprint/required-technologies [:robotics :identity :forms :dmn :bpmn :audit-ledger]
+  :itonami.blueprint/status :public-oss
+  :db/id -1}]

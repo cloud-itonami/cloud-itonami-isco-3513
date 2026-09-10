@@ -1,0 +1,48 @@
+(ns netops.operation-test
+  (:require [clojure.set :as set]
+            [clojure.test :refer [deftest is testing]]
+            [netops.operation :as op]))
+
+(deftest supported-and-reserved-are-disjoint
+  (testing "an op that is both would make :undeclared-op and :reserved-op
+           depend on map ordering"
+    (is (empty? (set/intersection (set (keys op/supported))
+                                  (set (keys op/reserved)))))))
+
+(deftest every-declared-op-is-declared
+  (doseq [o (concat (keys op/supported) (keys op/reserved))]
+    (is (op/declared? o) (str o " must be declared"))))
+
+(deftest undeclared-ops-are-not-declared
+  (testing "the vocabulary is an ALLOWLIST: anything nobody named is out"
+    (doseq [o [:drop-the-backbone :rebuild-everything nil "draft-change" 42]]
+      (is (not (op/declared? o)) (str (pr-str o) " must not be declared"))
+      (is (not (op/supported? o)))
+      (is (not (op/topology-op? o)))
+      (is (not (op/escalates? o))))))
+
+(deftest applying-a-topology-change-always-escalates
+  (is (op/escalates? :apply-topology-change))
+  (is (not (op/escalates? :draft-change)))
+  (is (not (op/escalates? :diagnose))))
+
+(deftest both-change-ops-bind-to-topology
+  (testing "the pre-change governor gated its basis and connectivity checks on
+           :apply-topology-change alone, which exempted the draft an operator
+           actually reads"
+    (is (op/topology-op? :draft-change))
+    (is (op/topology-op? :apply-topology-change))
+    (is (not (op/topology-op? :diagnose)))))
+
+(deftest every-reserved-op-says-why
+  (doseq [o (keys op/reserved)]
+    (is (string? (op/reserved-reason o)))
+    (is (seq (op/reserved-reason o)))))
+
+(deftest supported-ops-declare-both-properties
+  (testing "a missing key would read as false, which is the permissive
+           direction for :escalates?"
+    (doseq [[o m] op/supported]
+      (is (contains? m :escalates?) (str o " must declare :escalates?"))
+      (is (contains? m :topology-op?) (str o " must declare :topology-op?"))
+      (is (string? (:summary m))))))

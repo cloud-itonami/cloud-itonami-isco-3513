@@ -15,14 +15,26 @@
 (defprotocol Advisor
   (-advise [advisor store request] "request -> proposal map"))
 
-(defn- infer [_store {:keys [op stake remove-links add-links] :as request}]
+(defn- infer
+  "Build a proposal from the request.
+
+  Nothing here may assume the request is well formed. The advisor's job is to
+  produce a proposal the GOVERNOR can refuse; if it throws on a malformed
+  request instead, the actor has no verdict, no hold, and no ledger entry —
+  a crash is not a refusal, and it is the one outcome that leaves no audit
+  trail behind. Measured: `{:op nil}` reached `(name nil)` here and threw a
+  NullPointerException before `netops.governor` was ever consulted, so the
+  refusal the governor now has for an undeclared op could not be reached
+  through the wired graph. `pr-str` renders any op, and an unrecognised
+  `:stake` falls back rather than failing `case`."
+  [_store {:keys [op stake remove-links add-links] :as request}]
   {:op op
    :effect :propose
    :remove-links (vec remove-links)
    :add-links (vec add-links)
    :stake (or stake :low)
-   :confidence (case (or stake :low) :high 0.7 :medium 0.85 :low 0.95)
-   :rationale (str "proposed " (name op) " for client " (:client-id request))})
+   :confidence (case (or stake :low) :high 0.7 :medium 0.85 :low 0.95 0.95)
+   :rationale (str "proposed " (pr-str op) " for client " (pr-str (:client-id request)))})
 
 (defn mock-advisor []
   (reify Advisor

@@ -16,12 +16,30 @@
 
   The unconditional invariant: the NetworkSystemsAdvisor can never
   directly commit a record the NetworkSystemsGovernor refuses —
-  every commit-record! call is gated behind `:decide`."
+  every commit-record! call is gated behind `:decide`.
+
+  Routing is `netops.phase/of-verdict`, and every write appends a CHAINED
+  `netops.ledger` entry recording whether the write was reached by a human
+  resuming an escalated thread (`:approved-by :human`) or admitted
+  automatically (`:actor`). On the pre-change tree both cases produced
+  `{:disposition :commit :record ...}` with nothing to tell them apart, on the
+  one actor whose interrupt exists precisely to make that difference."
   (:require [langgraph.graph :as g]
             [langgraph.checkpoint :as cp]
             [netops.advisor :as advisor]
             [netops.governor :as governor]
+            [netops.ledger :as ledger]
+            [netops.phase :as phase]
             [netops.store :as store]))
+
+(defn- append-chained!
+  "Append `m` to the store's ledger as the next CHAINED entry. Reads the
+  current ledger so the new entry commits to both its content and its
+  position. Returns the entry."
+  [store m]
+  (let [e (ledger/entry (vec (store/ledger store)) m)]
+    (store/append-ledger! store e)
+    e))
 
 (defn build-graph
   "Build a compiled NetworkSystemsActor graph. `store` implements
@@ -53,24 +71,28 @@
                         :audit [{:node :govern :verdict v}]})))
       (g/add-node :decide
                    (fn [{:keys [verdict]}]
-                     {:disposition (cond
-                                     (:hard? verdict) :hold
-                                     (:escalate? verdict) :request-approval
-                                     :else :commit)}))
+                     ;; The routing rule is `netops.phase/of-verdict`, not an
+                     ;; inline cond, so it has a name a test and a ledger entry
+                     ;; can both carry. It checks :hard? before :escalate?.
+                     {:disposition (phase/of-verdict verdict)}))
       (g/add-node :request-approval (fn [s] s))
       (g/add-node :commit
-                   (fn [{:keys [request proposal]}]
+                   (fn [{:keys [request proposal disposition]}]
                      (let [record {:client-id (:client-id request)
                                     :op (:op proposal)
                                     :remove-links (:remove-links proposal)
-                                    :payload proposal}]
+                                    :add-links (:add-links proposal)
+                                    :payload proposal}
+                           approved-by (if (phase/approved-commit? disposition)
+                                         :human
+                                         :actor)]
                        (store/commit-record! store record)
-                       (store/append-ledger! store {:disposition :commit :record record})
+                       (append-chained! store (ledger/commit-entry record approved-by))
                        {:record record
-                        :audit [{:node :commit :record record}]})))
+                        :audit [{:node :commit :record record :approved-by approved-by}]})))
       (g/add-node :hold
                    (fn [{:keys [verdict]}]
-                     (store/append-ledger! store {:disposition :hold :verdict verdict})
+                     (append-chained! store (ledger/hold-entry verdict))
                      {:audit [{:node :hold :verdict verdict}]}))
       (g/set-entry-point :intake)
       (g/add-edge :intake :advise)

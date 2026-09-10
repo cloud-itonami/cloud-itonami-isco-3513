@@ -88,11 +88,114 @@
       (is (some #(= :link-wrong-client (:rule %)) (:violations v))))))
 
 (deftest draft-change-is-ok
-  (let [st (line-store)
-        v (governor/check req {} {:op :draft-change :effect :propose
-                                  :remove-links ["l-12"]
-                                  :confidence 0.9 :stake :low} st)]
-    (is (:ok? v))))
+  (testing "a draft that leaves the network whole is admissible without a human"
+    (let [st (triangle-store)
+          v (governor/check req {} {:op :draft-change :effect :propose
+                                    :remove-links ["l-13"] :add-links []
+                                    :confidence 0.9 :stake :low} st)]
+      (is (:ok? v))
+      (is (empty? (:violations v))))))
+
+(deftest hard-on-partitioning-draft
+  (testing "a DRAFT that strands a node is held, not committed.
+
+           This assertion replaces one that asserted the opposite. Both basis
+           checks and the connectivity check used to be gated on
+           `(= :apply-topology-change op)`, so removing the bridge `l-12` from
+           the line n1-n2-n3 under `:draft-change` was admitted with
+           `:ok? true` and an empty violation list -- and the old
+           `draft-change-is-ok` pinned exactly that request. The draft is the
+           document an operator reads before approving, so it was the one the
+           governor was not checking."
+    (let [st (line-store)
+          v (governor/check req {} {:op :draft-change :effect :propose
+                                    :remove-links ["l-12"] :add-links []
+                                    :confidence 0.9 :stake :low} st)]
+      (is (:hard? v))
+      (is (some #(= :partition-risk (:rule %)) (:violations v))))))
+
+(deftest hard-on-draft-citing-unregistered-or-foreign-link
+  (testing "the basis checks apply to drafts too, not only to applications"
+    (let [st (line-store)]
+      (store/register-client! st {:client-id "client-2" :name "Other"})
+      (store/register-link! st {:link-id "l-x" :client-id "client-2" :a "x1" :b "x2"})
+      (let [invented (governor/check req {} {:op :draft-change :effect :propose
+                                             :remove-links ["l-nope"] :add-links []
+                                             :confidence 0.9 :stake :low} st)
+            foreign (governor/check req {} {:op :draft-change :effect :propose
+                                            :remove-links ["l-x"] :add-links []
+                                            :confidence 0.9 :stake :low} st)]
+        (is (some #(= :unknown-link (:rule %)) (:violations invented)))
+        (is (some #(= :link-wrong-client (:rule %)) (:violations foreign)))))))
+
+(deftest hard-on-phantom-replacement-endpoint
+  (testing "an added link whose endpoint is not a registered node cannot be
+           the proof that connectivity survives -- measured on the pre-change
+           tree this reached a human with an EMPTY violation list"
+    (let [st (line-store)
+          v (governor/check req {} (apply-change ["l-12"] [{:link-id "l-ghost" :a "n1" :b "n-ghost"}]) st)]
+      (is (:hard? v))
+      (is (some #(= :unknown-node (:rule %)) (:violations v))))))
+
+(deftest hard-on-undeclared-and-reserved-ops
+  (testing "the vocabulary is an allowlist; a reserved op is a different rule
+           from an undeclared one because it is an authority boundary"
+    (let [st (triangle-store)
+          mk (fn [op] {:op op :effect :propose :remove-links [] :add-links []
+                       :confidence 0.9 :stake :low})]
+      (is (some #(= :undeclared-op (:rule %))
+                (:violations (governor/check req {} (mk :drop-the-backbone) st))))
+      (is (some #(= :undeclared-op (:rule %))
+                (:violations (governor/check req {} (mk nil) st))))
+      (is (some #(= :reserved-op (:rule %))
+                (:violations (governor/check req {} (mk :intercept-traffic) st)))))))
+
+(deftest hard-on-unusable-confidence
+  (testing "a non-numeric confidence threw on clj and was admitted clean on
+           cljs; a confidence of 99.0 bought out of escalation on both. Both
+           are now the same hard rule, and NEITHER escalates -- escalating
+           would ask a human to sign off on a number that means nothing."
+    (let [st (triangle-store)
+          mk (fn [c] {:op :diagnose :effect :propose :remove-links [] :add-links []
+                      :confidence c :stake :low})]
+      (doseq [c ["high" 99.0 nil -0.5]]
+        (let [v (governor/check req {} (mk c) st)]
+          (is (:hard? v) (str "confidence " (pr-str c) " must be hard"))
+          (is (not (:escalate? v)) (str "confidence " (pr-str c) " must not escalate"))
+          (is (some #(= :unusable-confidence (:rule %)) (:violations v))))))))
+
+(deftest hard-on-citation-without-topology-op
+  (testing "closing the gate on topology ops must not leave :diagnose as the
+           new hole"
+    (let [st (line-store)
+          v (governor/check req {} {:op :diagnose :effect :propose
+                                    :remove-links ["l-12"] :add-links []
+                                    :confidence 0.9 :stake :low} st)]
+      (is (:hard? v))
+      (is (some #(= :citation-without-topology-op (:rule %)) (:violations v))))))
+
+(deftest hard-on-request-without-client-id
+  (testing "an empty-map client lands under the nil key; a request carrying no
+           client-id must not resolve to it"
+    (let [st (triangle-store)]
+      (store/register-client! st {})
+      (let [v (governor/check {} {} {:op :diagnose :effect :propose
+                                     :remove-links [] :add-links []
+                                     :confidence 0.9 :stake :low} st)]
+        (is (:hard? v))
+        (is (some #(= :no-client-id (:rule %)) (:violations v)))))))
+
+(deftest hard-on-client-with-no-registered-topology
+  (testing "an empty node set is an unanswered question, not a proof of
+           connectivity"
+    (let [st (store/mem-store)]
+      (store/register-client! st {:client-id "client-1" :name "No Topology"})
+      (store/register-link! st {:link-id "l-1" :client-id "client-1" :a "p" :b "q"})
+      (let [v (governor/check req {} {:op :draft-change :effect :propose
+                                      :remove-links ["l-1"] :add-links []
+                                      :confidence 0.9 :stake :low} st)]
+        (is (:hard? v))
+        (is (some #(= :no-registered-topology (:rule %)) (:violations v)))))))
 
 (deftest escalates-low-confidence
   (let [st (triangle-store)

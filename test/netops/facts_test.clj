@@ -1,0 +1,177 @@
+(ns netops.facts-test
+  (:require [clojure.test :refer [deftest is testing]]
+            [netops.facts :as facts]
+            [netops.store :as store]))
+
+(defn- line-store
+  "n1 -- n2 -- n3. `l-12` is a bridge."
+  []
+  (let [st (store/mem-store)]
+    (store/register-client! st {:client-id "client-1" :name "Machi Net"})
+    (doseq [n ["n1" "n2" "n3"]]
+      (store/register-node! st {:node-id n :client-id "client-1" :name n}))
+    (store/register-link! st {:link-id "l-12" :client-id "client-1" :a "n1" :b "n2"})
+    (store/register-link! st {:link-id "l-23" :client-id "client-1" :a "n2" :b "n3"})
+    st))
+
+(defn- rules [vs] (into #{} (map :rule) vs))
+
+;; ---------------------------------------------------------------- confidence
+
+(deftest usable-confidence-tests-number-first
+  (testing "`(< \"high\" 0.6)` throws under clj and is false under cljs. The
+           predicate must answer, not throw, and must answer the SAME thing on
+           both hosts -- so `number?` is tested before any ordering."
+    (is (false? (boolean (facts/usable-confidence? "high"))))
+    (is (false? (boolean (facts/usable-confidence? nil))))
+    (is (false? (boolean (facts/usable-confidence? :high))))
+    (is (false? (boolean (facts/usable-confidence? [0.5]))))))
+
+(deftest usable-confidence-is-bounded-on-both-sides
+  (testing "a floor with no ceiling admitted 99.0"
+    (is (facts/usable-confidence? 0.0))
+    (is (facts/usable-confidence? 1.0))
+    (is (facts/usable-confidence? 0.6))
+    (is (not (facts/usable-confidence? 99.0)))
+    (is (not (facts/usable-confidence? 1.0001)))
+    (is (not (facts/usable-confidence? -0.5)))))
+
+(deftest nan-is-unusable-not-out-of-range
+  (testing "NaN is a number that orders with nothing, so a bounds check alone
+           would call it out-of-range rather than unreadable"
+    (let [nan (/ 0.0 0.0)]
+      (is (not (facts/usable-confidence? nan))))))
+
+(deftest low-confidence-requires-a-usable-one
+  (is (facts/low-confidence? 0.1))
+  (is (not (facts/low-confidence? 0.9)))
+  (testing "an unusable confidence is not LOW, it is unreadable -- the governor
+           must hard-block it rather than escalate it"
+    (is (not (facts/low-confidence? "high")))
+    (is (not (facts/low-confidence? nil)))
+    (is (not (facts/low-confidence? 99.0)))))
+
+(deftest confidence-violations-name-the-rule
+  (is (empty? (facts/confidence-violations {:confidence 0.9})))
+  (is (= #{:unusable-confidence} (rules (facts/confidence-violations {:confidence "high"}))))
+  (is (= #{:unusable-confidence} (rules (facts/confidence-violations {})))))
+
+;; ---------------------------------------------------------------- identity
+
+(deftest identified-rejects-blank-and-non-string
+  (is (facts/identified? "client-1"))
+  (is (not (facts/identified? nil)))
+  (is (not (facts/identified? "")))
+  (is (not (facts/identified? "   ")))
+  (is (not (facts/identified? :client-1)))
+  (is (not (facts/identified? 1))))
+
+(deftest provenance-separates-missing-id-from-unregistered-client
+  (let [st (line-store)]
+    (store/register-client! st {})
+    (testing "the empty-map client lands under the nil key; a request with no
+             client-id must not resolve to it"
+      (is (= #{:no-client-id} (rules (facts/provenance-violations st {}))))
+      (is (= #{:no-client-id} (rules (facts/provenance-violations st {:client-id ""})))))
+    (is (= #{:no-client} (rules (facts/provenance-violations st {:client-id "nope"}))))
+    (is (empty? (facts/provenance-violations st {:client-id "client-1"})))))
+
+;; ---------------------------------------------------------------- vocabulary
+
+(deftest vocabulary-separates-undeclared-from-reserved
+  (is (empty? (facts/vocabulary-violations {:op :diagnose})))
+  (is (= #{:undeclared-op} (rules (facts/vocabulary-violations {:op :drop-the-backbone}))))
+  (is (= #{:undeclared-op} (rules (facts/vocabulary-violations {:op nil}))))
+  (is (= #{:reserved-op} (rules (facts/vocabulary-violations {:op :intercept-traffic}))))
+  (testing "a reserved refusal must carry the reason it is reserved"
+    (is (seq (:detail (first (facts/vocabulary-violations {:op :intercept-traffic})))))))
+
+(deftest actuation-requires-propose
+  (is (empty? (facts/actuation-violations {:effect :propose})))
+  (is (= #{:no-actuation} (rules (facts/actuation-violations {:effect :write}))))
+  (is (= #{:no-actuation} (rules (facts/actuation-violations {})))))
+
+(deftest citation-without-topology-op
+  (testing "closing the gate on topology ops must not leave the ungated op as
+           the new hole"
+    (is (empty? (facts/citation-violations {:op :diagnose})))
+    (is (empty? (facts/citation-violations {:op :draft-change :remove-links ["l-12"]})))
+    (is (= #{:citation-without-topology-op}
+           (rules (facts/citation-violations {:op :diagnose :remove-links ["l-12"]}))))
+    (is (= #{:citation-without-topology-op}
+           (rules (facts/citation-violations {:op :diagnose
+                                              :add-links [{:link-id "x" :a "n1" :b "n2"}]}))))))
+
+;; ---------------------------------------------------------------- basis
+
+(deftest removal-basis-separates-unknown-from-foreign
+  (let [st (line-store)]
+    (store/register-client! st {:client-id "client-2" :name "Other"})
+    (store/register-link! st {:link-id "l-x" :client-id "client-2" :a "x1" :b "x2"})
+    (is (empty? (facts/removal-basis-violations st "client-1" {:remove-links ["l-12"]})))
+    (is (= #{:unknown-link} (rules (facts/removal-basis-violations st "client-1" {:remove-links ["nope"]}))))
+    (is (= #{:link-wrong-client} (rules (facts/removal-basis-violations st "client-1" {:remove-links ["l-x"]}))))
+    (testing "both halves of a mixed citation are reported"
+      (is (= #{:unknown-link :link-wrong-client}
+             (rules (facts/removal-basis-violations st "client-1" {:remove-links ["nope" "l-x"]})))))))
+
+(deftest addition-basis-rejects-phantom-endpoints
+  (let [st (line-store)]
+    (is (empty? (facts/addition-basis-violations st "client-1"
+                                                 {:add-links [{:link-id "l-13" :a "n1" :b "n3"}]})))
+    (testing "an endpoint that is not a registered node cannot be the proof
+             that connectivity survives"
+      (is (= #{:unknown-node}
+             (rules (facts/addition-basis-violations st "client-1"
+                                                     {:add-links [{:link-id "g" :a "n1" :b "ghost"}]})))))
+    (testing "a node registered to ANOTHER client is not this client's node"
+      (store/register-client! st {:client-id "client-2" :name "Other"})
+      (store/register-node! st {:node-id "x1" :client-id "client-2" :name "x1"})
+      (is (= #{:unknown-node}
+             (rules (facts/addition-basis-violations st "client-1"
+                                                     {:add-links [{:link-id "g" :a "n1" :b "x1"}]})))))
+    (testing "a self-loop adds no reachability"
+      (is (= #{:self-loop-link}
+             (rules (facts/addition-basis-violations st "client-1"
+                                                     {:add-links [{:link-id "s" :a "n1" :b "n1"}]})))))))
+
+;; ---------------------------------------------------------------- connectivity
+
+(deftest connectivity-holds-a-bridge-removal
+  (let [st (line-store)]
+    (is (= #{:partition-risk}
+           (rules (facts/connectivity-violations st "client-1" {:remove-links ["l-12"]}))))
+    (is (empty? (facts/connectivity-violations st "client-1" {:remove-links []})))))
+
+(deftest connectivity-accepts-a-registered-replacement
+  (let [st (line-store)]
+    (is (empty? (facts/connectivity-violations
+                 st "client-1"
+                 {:remove-links ["l-12"] :add-links [{:link-id "l-13" :a "n1" :b "n3"}]})))))
+
+(deftest connectivity-ignores-phantom-endpoints-as-a-second-guard
+  (testing "`addition-basis-violations` runs first, but this function must not
+           depend on that: it filters adjacency to REGISTERED nodes itself, so
+           a phantom replacement cannot prove the partition away even if the
+           basis check were removed"
+    (let [st (line-store)]
+      (is (= #{:partition-risk}
+             (rules (facts/connectivity-violations
+                     st "client-1"
+                     {:remove-links ["l-12"] :add-links [{:link-id "g" :a "n1" :b "ghost"}]})))))))
+
+(deftest an-empty-node-set-is-not-a-proof
+  (testing "the pre-change short-circuit `(<= (count node-ids) 1)` made every
+           removal pass for a client whose topology was never registered"
+    (let [st (store/mem-store)]
+      (store/register-client! st {:client-id "c" :name "No Topology"})
+      (store/register-link! st {:link-id "l-1" :client-id "c" :a "p" :b "q"})
+      (is (= #{:no-registered-topology}
+             (rules (facts/connectivity-violations st "c" {:remove-links ["l-1"]})))))))
+
+(deftest a-single-node-is-genuinely-connected
+  (testing "one node and zero nodes must not return the same value"
+    (let [st (store/mem-store)]
+      (store/register-client! st {:client-id "c" :name "One Node"})
+      (store/register-node! st {:node-id "only" :client-id "c" :name "only"})
+      (is (empty? (facts/connectivity-violations st "c" {:remove-links []}))))))

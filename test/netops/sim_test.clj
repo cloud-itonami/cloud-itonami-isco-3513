@@ -1,0 +1,41 @@
+(ns netops.sim-test
+  (:require [clojure.string]
+            [clojure.test :refer [deftest is testing]]
+            [netops.sim :as sim]))
+
+(deftest the-scenario-table-passes
+  (let [r (sim/run)]
+    (is (:ok? r) (sim/report r))
+    (is (empty? (:mismatches r)))
+    (is (empty? (:unreasoned r)))
+    (is (empty? (:wrote-anyway r)))
+    (is (empty? (:ledger-breaks r)))))
+
+(deftest the-table-demonstrates-refusals
+  (testing "a harness that refused nothing would print green while
+           demonstrating nothing"
+    (is (pos? (:refusals (sim/run))))))
+
+(deftest every-scenario-names-a-reason
+  (testing ":because or :clean? -- a scenario asserting only the phase counts a
+           run that failed for an unrelated reason as a demonstration"
+    (doseq [s sim/scenarios]
+      (is (or (contains? s :because) (contains? s :clean?))
+          (str (:name s) " must declare why")))))
+
+(deftest a-table-with-no-refusal-refuses-to-report-a-pass
+  (testing "the harness must fail loudly when it stops discriminating.
+
+           Reported on a run value with every scenario clean and zero
+           refusals -- the shape a table degrades into when its refusal
+           scenarios are deleted one by one. `:ok?` must be false even though
+           nothing mismatched, because 'nothing was refused' is a defect in the
+           table rather than a pass."
+    (let [degraded {:results [{:name :only-clean :expect :commit :actual :commit
+                               :match? true :reasoned? true :because-ok? true
+                               :refusal? false :rules #{}}]
+                    :refusals 0 :mismatches [] :unreasoned []
+                    :wrote-anyway [] :ledger-breaks [] :ok? false}
+          out (sim/report degraded)]
+      (is (re-find #"REFUSING TO REPORT A PASS" out))
+      (is (not (re-find #"PASS\n" (clojure.string/replace out "REFUSING TO REPORT A PASS" "")))))))

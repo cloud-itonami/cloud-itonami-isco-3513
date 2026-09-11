@@ -11,7 +11,7 @@ NetworkSystemsGovernor as a langgraph StateGraph
 (`intake → advise → govern → decide → commit/hold`, human-approval
 interrupt), modeled on cloud-itonami-isco-4311's bookkeeping actor.
 66 tests / 244 assertions green, plus an 18-scenario governed run
-(`clojure -M:sim`) of which 16 are refusals.
+(`kbb -M:sim`) of which 16 are refusals.
 
 The network-specific HARD invariant: **connectivity preservation** —
 before any link removal is eligible for approval, the governor
@@ -53,9 +53,9 @@ Seven namespaces, all portable `.cljc`:
 | `netops.advisor` | proposes; never writes |
 
 ```bash
-clojure -M:test   # unit tests
-clojure -M:sim    # governed scenario run — exits non-zero if it refused nothing
-clojure -M:lint   # clj-kondo, errors fail
+kbb -M:test   # unit tests
+kbb -M:sim    # governed scenario run — exits non-zero if it refused nothing
+kbb -M:lint   # clj-kondo, errors fail
 ```
 
 AGPL-3.0-or-later, forkable by any qualified operator. Part of the

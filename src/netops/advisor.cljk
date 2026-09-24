@@ -10,7 +10,7 @@
                :remove-links [link-id ...]
                :add-links [{:link-id str :a str :b str} ...]
                :stake kw :confidence n :rationale str}"
-  (:require #?(:clj [clojure.edn :as edn] :cljs [cljs.reader :as edn])))
+  (:require #?(:clj [kotoba.lang.edn :as edn] :cljs [cljs.reader :as edn])))
 
 (defprotocol Advisor
   (-advise [advisor store request] "request -> proposal map"))

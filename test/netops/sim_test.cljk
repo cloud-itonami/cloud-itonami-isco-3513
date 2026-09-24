@@ -1,6 +1,6 @@
 (ns netops.sim-test
   (:require [kotoba.lang.text]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [netops.sim :as sim]))
 
 (deftest the-scenario-table-passes

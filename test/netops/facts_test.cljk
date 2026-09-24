@@ -1,5 +1,5 @@
 (ns netops.facts-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [netops.facts :as facts]
             [netops.store :as store]))
 

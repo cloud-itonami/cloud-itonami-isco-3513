@@ -1,5 +1,5 @@
 (ns netops.actor-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [netops.actor :as actor]
             [netops.ledger :as ledger]
             [netops.store :as store]))

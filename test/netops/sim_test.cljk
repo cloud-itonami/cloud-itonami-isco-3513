@@ -1,5 +1,5 @@
 (ns netops.sim-test
-  (:require [clojure.string]
+  (:require [kotoba.lang.text]
             [clojure.test :refer [deftest is testing]]
             [netops.sim :as sim]))
 
@@ -38,4 +38,4 @@
                     :wrote-anyway [] :ledger-breaks [] :ok? false}
           out (sim/report degraded)]
       (is (re-find #"REFUSING TO REPORT A PASS" out))
-      (is (not (re-find #"PASS\n" (clojure.string/replace out "REFUSING TO REPORT A PASS" "")))))))
+      (is (not (re-find #"PASS\n" (kotoba.lang.text/replace out "REFUSING TO REPORT A PASS" "")))))))

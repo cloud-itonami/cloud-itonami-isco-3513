@@ -63,7 +63,7 @@
      sides. This is why the check is a named predicate and not an inline
      comparison: the bug was in the comparison's *shape*, and a shape is
      exactly what an inline expression does not let you name or test."
-  (:require [clojure.string :as str]
+  (:require [kotoba.lang.text :as str]
             [netops.operation :as op]
             [netops.store :as store]))
 

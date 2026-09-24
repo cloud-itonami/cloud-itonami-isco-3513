@@ -1,0 +1,33 @@
+;; What this vertical's robot physically does, declared for
+;; kotoba.robotics.process (kotoba-lang/robotics). `kbb -M:physics` runs it.
+;;
+;; README: network and systems technicians (ISCO 3513) are a Wave-0 cognitive
+;; occupation (planning/monitoring/triage, no robotics gate); blueprint.edn
+;; declares :itonami.blueprint/robotics true. The physical edge of that work
+;; in a comms room is racking a switch and pulling patch cable through a tray.
+;; These cases declare that edge; the actor itself stays cognitive.
+;;
+;; The patch-cable case models the eight copper conductors of a 4-pair 23 AWG
+;; cable as one bar (area 8 x 0.26 mm^2); jacket and twist are not modelled.
+;; Every number without a cited source is marked `estimate` in its :basis.
+{:physics/schema "itonami.physical-ai.spec.v1"
+ :repo "cloud-itonami/cloud-itonami-isco-3513"
+ :cases
+ [{:id :switch-into-rack
+   :kind :manipulator
+   :procedure "arm lifts a network switch from the work cart up into its rack unit"
+   :params {:l1-m 0.60 :l2-m 0.55 :m1-kg 8.0 :m2-kg 6.0
+            :from [0.70 0.10] :to [0.30 0.80] :duration-s 3.0 :steps 600}
+   :sweep {:param :payload-kg :values [2.0 4.0 6.0 9.0 12.0]}
+   :quantity :peak-tau1-nm
+   :limit {:max 150.0 :basis "estimate: continuous shoulder torque of a ~10 kg-class collaborative arm"}
+   :boundary {:lo 0.5 :hi 60.0}}
+  {:id :patch-cable-pull
+   :kind :material
+   :procedure "robot pulls a 4-pair copper patch cable through the cable tray; the conductors carry the pull"
+   :params {:length-m 0.10 :area-m2 2.08e-6 :youngs-modulus-pa 117.0e9 :yield-stress-pa 70.0e6
+            :hardening-pa 1.0e9 :density-kg-m3 8960.0}
+   :sweep {:param :max-force-n :values [50.0 80.0 110.0 140.0 180.0]}
+   :quantity :final-strain
+   :limit {:max 6.0e-4 :basis "estimate: yield strain of annealed copper conductor (about 70 MPa / 117 GPa); a pull that yields the copper leaves permanent elongation"}
+   :boundary {:lo 10.0 :hi 400.0}}]}

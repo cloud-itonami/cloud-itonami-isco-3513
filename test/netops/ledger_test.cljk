@@ -1,5 +1,5 @@
 (ns netops.ledger-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [netops.ledger :as ledger]))
 
 (deftest chain-hash-is-deterministic

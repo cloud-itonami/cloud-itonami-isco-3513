@@ -1,6 +1,6 @@
 (ns netops.operation-test
   (:require [kotoba.lang.coll :as set]
-            [clojure.test :refer [deftest is testing]]
+            [kotoba.test :refer [deftest is testing]]
             [netops.operation :as op]))
 
 (deftest supported-and-reserved-are-disjoint

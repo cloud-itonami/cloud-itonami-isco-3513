@@ -1,5 +1,5 @@
 (ns netops.phase-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [kotoba.test :refer [deftest is testing]]
             [netops.phase :as phase]))
 
 (deftest hard-beats-escalate
